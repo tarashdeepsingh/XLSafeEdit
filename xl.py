@@ -3,10 +3,10 @@ import shutil
 import os
 from lxml import etree
 
-def update_excel_from_json(xlsx_path, output_path, data_json):
+def update_excel_from_json(xlsx_path, output_path, data_json, target_sheet_name, has_header=True):
     temp_dir = "temp_excel"
 
-    # Step 1: Unzip Excel
+    # Step 1: Unzip Excel (keep it in memory)
     with zipfile.ZipFile(xlsx_path, 'r') as zip_ref:
         zip_ref.extractall(temp_dir)
 
@@ -18,7 +18,6 @@ def update_excel_from_json(xlsx_path, output_path, data_json):
     sheets = workbook_tree.findall(".//main:sheets/main:sheet", namespaces=ns)
 
     sheet_filename = None
-    target_sheet_name = "Data Sheet"
 
     for i, sheet in enumerate(sheets, start=1):
         if sheet.attrib.get("name") == target_sheet_name:
@@ -30,7 +29,7 @@ def update_excel_from_json(xlsx_path, output_path, data_json):
 
     sheet_path = os.path.join(temp_dir, 'xl', 'worksheets', sheet_filename)
 
-    # Step 3: Load sharedStrings.xml
+    # Step 3: Load sharedStrings.xml (optional)
     shared_strings_path = os.path.join(temp_dir, 'xl', 'sharedStrings.xml')
     shared_strings = []
     if os.path.exists(shared_strings_path):
@@ -49,6 +48,7 @@ def update_excel_from_json(xlsx_path, output_path, data_json):
         cell_ref = f"{col_letter}{row_num}"
         cell = None
 
+        # Find the cell in the row
         for c in row.findall("main:c", namespaces=ns):
             if c.attrib.get("r") == cell_ref:
                 cell = c
@@ -58,7 +58,13 @@ def update_excel_from_json(xlsx_path, output_path, data_json):
             cell = etree.Element(f"{{{ns['main']}}}c", r=cell_ref)
             row.append(cell)
 
-        cell.attrib["t"] = "n" if isinstance(value, (int, float)) else "str"
+        # Set the value type (string or numeric)
+        if isinstance(value, (int, float)):
+            cell.attrib["t"] = "n"
+        else:
+            cell.attrib["t"] = "str"
+
+        # Set the actual value
         v = cell.find("main:v", namespaces=ns)
         if v is None:
             v = etree.SubElement(cell, f"{{{ns['main']}}}v")
@@ -69,18 +75,17 @@ def update_excel_from_json(xlsx_path, output_path, data_json):
     data_iter = iter(data_json)
 
     for row in rows:
-        if int(row.attrib["r"]) == 1:
-            continue  # Skip header
+        if has_header and int(row.attrib["r"]) == 1:
+            continue  # Skip header row if specified
 
         try:
             entry = next(data_iter)
         except StopIteration:
             break  # No more data to write
 
-        set_cell_value(row, "J", entry["area_name"])
-        set_cell_value(row, "K", entry["parent_area"])
-        set_cell_value(row, "L", entry["state_value"])
-        set_cell_value(row, "M", entry["national_value"])
+        for col_letter, value in entry.items():
+            set_cell_value(row, col_letter, value)
+
         print(f"✅ Updated Row {row.attrib['r']}")
         updates += 1
 
@@ -89,7 +94,7 @@ def update_excel_from_json(xlsx_path, output_path, data_json):
     # Step 6: Save updated sheet
     tree.write(sheet_path, xml_declaration=True, encoding='UTF-8')
 
-    # Step 7: Repack Excel
+    # Step 7: Repack Excel (only if modifications are done)
     shutil.make_archive("final_excel", 'zip', temp_dir)
     shutil.move("final_excel.zip", output_path)
     shutil.rmtree(temp_dir)
@@ -99,28 +104,15 @@ def update_excel_from_json(xlsx_path, output_path, data_json):
 
 # Example usage
 data_json = [
-    {
-        "area_name": "Mumbai",
-        "parent_area": "India",
-        "state_value": 76.5,
-        "national_value": 88.3
-    },
-    {
-        "area_name": "Mumbai",
-        "parent_area": "India",
-        "state_value": 69.2,
-        "national_value": 91.0
-    },
-    {
-        "area_name": "Mumbai",
-        "parent_area": "India",
-        "state_value": 97.2,
-        "national_value": 23.3
-    }
+    {"K": "Mumbai", "L": "Maharashtra", "M": "India", "N": 34.5, "O": 76.5, "P": 88.3},
+    {"K": "Mumbai", "L": "Maharashtra", "M": "India", "N": 36.8, "O": 69.2, "P": 91.0},
+    {"K": "Mumbai", "L": "Maharashtra", "M": "India", "N": 384.47, "O": 97.2, "P": 23.3}
 ]
 
 update_excel_from_json(
-    r"C:\Users\Tarashdeep Singh\Desktop\test.xlsx",
+    r"C:\Users\Tarashdeep Singh\Desktop\test2.xlsx",
     r"C:\Users\Tarashdeep Singh\Desktop\updated_test.xlsx",
-    data_json
+    data_json,
+    target_sheet_name="Data Sheet",
+    has_header=True
 )
